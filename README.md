@@ -269,15 +269,15 @@ python -c "from tools import find_alternatives; from utils.data_loader import lo
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I wrote criterion 4 to check that the fit card includes the item title, price, and a recommendation label — "good fit", "possible fit", or "not a fit" — in 5 of 5 runs.
+- *What came back:* Claude pointed out that `create_fit_card` is a social media caption generator, not a classifier, and those labels would never appear in its output because the prompt never asks for them. A criterion testing for them would fail 5 of 5 not because the code is broken but because the test doesn't match the tool.
+- *What I changed:* I removed the recommendation label requirement and replaced it with checking that the fit card mentions the item title, price, and platform — content the prompt explicitly instructs the model to include — targeting 4 of 5 to account for model variation.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I asked for ideas for a second branch in the planning loop — a condition beyond the empty search that would take a different path.
+- *What came back:* Claude suggested three options: (A) stop if `suggest_outfit` returns empty, (B) flag if all results exceed the budget, (C) skip a result with missing fields. It recommended Option A as the most honest second branch because it tests a genuinely different condition — search succeeded but the model returned nothing — rather than duplicating the empty-search logic.
+- *What I changed:* I chose Option A and implemented the branch: after writing to `session["outfit_suggestion"]`, the loop checks if the string is empty or whitespace, sets `session["error"]` if so, and returns without calling `create_fit_card`.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
