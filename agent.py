@@ -17,7 +17,7 @@ import re
 
 import config
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, find_alternatives
 from generate import ModelUnavailable
 
 
@@ -45,6 +45,7 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "wardrobe": wardrobe,        # the user's wardrobe
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
+        "alternatives": [],          # what find_alternatives returned
         "error": None,               # set when the run ended early
     }
 
@@ -162,8 +163,19 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     # Step 4: pick the first result
     session["selected_item"] = results[0]
 
+    # Step 4b: find alternatives in the same category at or under the same price
+    session["alternatives"] = find_alternatives(results[0], max_price=max_price)
+
     # Step 5: suggest outfit
     session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+
+    # Branch: model returned nothing — skip fit card and surface the failure
+    if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+        session["error"] = (
+            "The outfit suggestion came back empty. The item was found but the model "
+            "did not return styling advice — try running again or check your API key."
+        )
+        return session
 
     # Step 6: create fit card
     session["fit_card"] = create_fit_card(session["outfit_suggestion"], results[0])
@@ -181,6 +193,12 @@ def _show(session: dict) -> None:
 
     item = session["selected_item"] or {}
     print(f"  found:    {item.get('title')} — ${item.get('price')} on {item.get('platform')}")
+    alts = session.get("alternatives", [])
+    if alts:
+        alt_titles = ", ".join(f"{a['title']} (${a['price']})" for a in alts[:3])
+        print(f"  alts:     {alt_titles}")
+    else:
+        print(f"  alts:     none in this category at or under this price")
     print(f"  outfit:   {session['outfit_suggestion']}")
     print(f"  fit card: {session['fit_card']}")
 

@@ -76,6 +76,13 @@ FitFindr takes a plain-language query — like "vintage graphic tee under $30, s
 - **Returns:** A string of 2–4 sentences written as a real social post, mentioning the item name, price, and platform each exactly once.
 - **When it has nothing:** If `outfit` is empty or whitespace, returns the string `"No outfit suggestion was available to build a fit card from."` without calling the model.
 
+### `find_alternatives`
+
+- **What it does:** Given the selected listing, finds other listings in the same category that are not the selected item, at or under the same price ceiling, sorted by price ascending.
+- **Inputs:** `item` (dict) — the selected listing dict; `max_price` (float | None) — price ceiling, or None to use the selected item's own price as the ceiling.
+- **Returns:** A list of listing dicts (up to `config.SEARCH_RESULT_LIMIT`), each containing `id`, `title`, `price`, `condition`, `size`, and `platform`, sorted cheapest first. Does not call the model.
+- **When it has nothing:** Returns an empty list `[]`. Never raises, never returns None.
+
 ---
 
 ## Planning Loop
@@ -91,13 +98,17 @@ FitFindr takes a plain-language query — like "vintage graphic tee under $30, s
      The grader checks your code against what you claim here, so the file and
      function have to be real. -->
 
-**Branch rule:** If `search_listings` returns an empty list, write a message into `session["error"]` telling the user which constraint to relax (size, price ceiling, or description keywords), and return the session immediately — `suggest_outfit` and `create_fit_card` are never called. If `search_listings` returns one or more results, take the first result, pass it to `suggest_outfit`, pass the outfit string to `create_fit_card`, and return the completed session.
+**Branch rule (1 — empty search):** If `search_listings` returns an empty list, write a message into `session["error"]` telling the user which constraint to relax (size, price ceiling, or description keywords), and return the session immediately — `suggest_outfit` and `create_fit_card` are never called.
+
+**Branch rule (2 — empty outfit):** If `suggest_outfit` returns an empty or whitespace-only string, write a message into `session["error"]` noting that the item was found but the model returned no styling advice, and return the session immediately — `create_fit_card` is never called. `session["fit_card"]` remains `None`.
+
+In all other cases: take the first search result, call `suggest_outfit`, call `create_fit_card`, and return the completed session.
 
 **Where it lives:** `agent.py::run_agent`
 
 **How the query is parsed:** Regex. Three patterns are applied in sequence to the raw query string: (1) `size[:\s]+(\S+)` captures the size token; (2) `under\s*\$?([\d.]+)` or `\$([\d.]+)` captures the price ceiling as a float; (3) the matched spans are removed from the string and the remaining text is cleaned up with `\s+` normalization to produce the description keyword string.
 
-**What moves through the session:** `session["parsed"]` (dict with `description`, `size`, `max_price`) → `session["search_results"]` (list of listing dicts) → branch: `session["error"]` and early return, or → `session["selected_item"]` (first listing dict) → `session["outfit_suggestion"]` (str) → `session["fit_card"]` (str).
+**What moves through the session:** `session["parsed"]` (dict with `description`, `size`, `max_price`) → `session["search_results"]` (list of listing dicts) → branch 1: `session["error"]` and early return, or → `session["selected_item"]` (first listing dict) → `session["alternatives"]` (list of listing dicts) → `session["outfit_suggestion"]` (str) → branch 2: `session["error"]` and early return, or → `session["fit_card"]` (str).
 
 ---
 
@@ -138,6 +149,56 @@ $ python app.py ask 'cargo pant under $40'
 
 ```
 
+### stretch challenge output - FIND ALTERNATIVES
+```
+=== A query the data can match ===
+  found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+  alts:     Mesh Long-Sleeve Top — Black ($15.0), Henley Long Sleeve — Washed Burgundy ($16.0), Tie-Dye Long Sleeve — Pastel ($17.0)
+  outfit:   Here are two outfit ideas using the Y2K butterfly baby tee and pieces from your existing wardrobe:
+
+### Outfit 1: Casual & Balanced Y2K Streetwear
+*Balance out the fitted, cropped silhouette of the baby tee with baggy bottoms and chunky footwear.*
+* **Top:** Y2K Baby Tee — Butterfly Print
+* **Bottoms:** Baggy straight-leg jeans, dark wash
+* **Outerwear:** Vintage black denim jacket (worn open for layering)
+* **Shoes:** Chunky white sneakers
+* **Accessories:** Black crossbody bag
+
+### Outfit 2: Sweet & Edgy Contrast
+*Combine the girly, cottagecore-leaning butterfly graphic with tougher black accessories for a classic Y2K mix-and-match look.*
+* **Top:** Y2K Baby Tee — Butterfly Print
+* **Bottoms:** Wide-leg khaki trousers
+* **Outerwear:** Black cropped zip hoodie (tied around the waist or worn loosely over top)
+* **Shoes:** Black combat boots
+* **Accessories:** Brown leather belt
+  fit card: obsessed is an understatement for this little y2k butterfly baby tee 🦋 throwing it on with baggy denim and chunky sneakers all spring long. snagged it on depop for just $18.0 and she’s already my favorite piece in the closet!
+
+=== A query it can't ===
+  stopped: No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
+  fit_card is None — it should still be None here
+
+The second one should stop before the fit card. If both paths look the same,
+the branch isn't doing anything yet.
+
+```
+
+### second branch — empty outfit suggestion
+
+To trigger this branch, `suggest_outfit` was temporarily stubbed to return `""`.
+
+```
+=== A query the data can match ===
+  stopped: The outfit suggestion came back empty. The item was found but the model did not return styling advice — try running again or check your API key.
+  fit_card is None — it should still be None here
+
+=== A query it can't ===
+  stopped: No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
+  fit_card is None — it should still be None here
+```
+
+The first path stops after `suggest_outfit` — `search_listings` succeeded and `selected_item` is set, but `fit_card` is still `None` because `create_fit_card` was never called. This is a different stop condition from the empty-search branch.
+
+
 **The three tools, tested one at a time**
 
 ```
@@ -177,6 +238,21 @@ Here are two specific outfit ideas using the vintage Levi's 501s and pieces from
 $ python -c "from tools import create_fit_card; from utils.data_loader import load_listings; print(create_fit_card('jeans and white sneakers', load_listings()[0]))"
 
 Still kicking myself over finding these vintage Levi's 501 jeans—the medium wash on them is literally perfection. Just dropped them over on my depop for $38, and honestly, they're the ultimate grab-and-go pair for everyday streetwear. Honestly, you can't go wrong styling these with just a crisp white tee and fresh sneakers for that effortless 90s off-duty look. ✨
+
+```
+
+### new tool - 'find_alternatives'
+```
+-- WITH ALTERNATIVES Suggestion
+python -c "from tools import find_alternatives; from utils.data_loader import load_listings; item = load_listings()[0]; print(find_alternatives(item, max_price=40))"
+
+Slip Dress — Floral, Midi Length', 'description': 'Delicate 90s slip dress in a muted floral print. Midi length, adjustable straps. Light snag on the side seam — not visible when worn.', 'category': 'bottoms', 'style_tags': ['90s', 'vintage', 'feminine', 'floral', 'cottagecore'], 'size': 'M', 'condition': 'good', 'price': 30.0, 'colors': ['ivory', 'dusty pink', 'green'], 'brand': None, 'platform': 'depop'}, {'id': 'lst_037', 'title': 'Straight Leg Black Jeans — Faded', 'description': 'Faded black straight-leg jeans. Sits at the hips, classic fit. Slightly cropped length. No rips, just natural fading.', 'category': 'bottoms', 'style_tags': ['vintage', 'classic', 'grunge', 'denim'], 'size': 'W28', 'condition': 'good', 'price': 30.0, 'colors': ['black', 'faded black'], 'brand': "Levi's", 'platform': 'thredUp'}, {'id': 'lst_005', 'title': 'Corduroy Wide-Leg Pants — Rust', 'description': 'Beautiful rust-colored cords in a wide-leg silhouette. High-waisted. Minor pilling on the seat but otherwise great condition.', 'category': 'bottoms', 'style_tags': ['vintage', 'cottagecore', '70s', 'earth tones'], 'size': 'W28', 'condition': 'good', 'price': 32.0, 'colors': ['rust', 'orange'], 'brand': None, 'platform': 'depop'}, {'id': 'lst_025', 'title': 'Wide-Leg Linen Trousers — Natural', 'description': 'Relaxed wide-leg linen trousers in a natural/undyed color. Drawstring waist. Very breathable. Sold as a large but cut more like a medium.', 'category': 'bottoms', 'style_tags': ['cottagecore', 'minimal', 'linen', 'earth tones', 'summer'], 'size': 'M/L', 'condition': 'excellent', 'price': 34.0, 'colors': ['natural', 'ecru', 'tan'], 'brand': None, 'platform': 'poshmark'}, {'id': 'lst_031', 'title': 'Baggy Carpenter Jeans — Dark Wash', 'description': 'Baggy carpenter jeans with hammer loop on the side. Dark wash. Sits at the waist. Major 90s workwear vibes.', 'category': 'bottoms', 'style_tags': ['90s', 'vintage', 'streetwear', 'baggy', 'workwear'], 'size': 'W32', 'condition': 'good', 'price': 36.0, 'colors': ['dark blue', 'indigo'], 'brand': None, 'platform': 'depop'}]
+
+-- WITHOUT ALTERNATIVE Suggestions
+
+python -c "from tools import find_alternatives; from utils.data_loader import load_listings; item = load_listings()[0]; print(find_alternatives(item, max_price=0.01))"
+
+[] 
 
 ```
 

@@ -25,6 +25,39 @@ from generate import generate
 from utils.data_loader import load_listings
 
 
+# ── Tool 4: find_alternatives ─────────────────────────────────────────────────
+
+def find_alternatives(item: dict, max_price: float | None = None) -> list[dict]:
+    """
+    Given a selected listing, find other listings in the same category that
+    are not the same item, optionally capped at a price ceiling.
+
+    Args:
+        item:      a listing dict — the item the user is currently considering.
+        max_price: maximum price inclusive, or None to use the selected item's
+                   price as the ceiling (show only cheaper or equal alternatives).
+
+    Returns:
+        A list of listing dicts from the same category, excluding the selected
+        item, sorted by price ascending, each containing id, title, price,
+        condition, size, and platform. Returns an empty list when no
+        alternatives exist.
+    """
+    ceiling = max_price if max_price is not None else item.get("price")
+    category = item.get("category")
+    selected_id = item.get("id")
+
+    listings = load_listings()
+    alternatives = [
+        l for l in listings
+        if l.get("category") == category
+        and l.get("id") != selected_id
+        and (ceiling is None or l.get("price", float("inf")) <= ceiling)
+    ]
+    alternatives.sort(key=lambda l: l.get("price", 0))
+    return alternatives[:config.SEARCH_RESULT_LIMIT]
+
+
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
 
 def search_listings(
