@@ -39,9 +39,7 @@
 
 ## What This Does
 
-<!-- Three or four sentences: what a user asks for, and what they get back. -->
-
-
+FitFindr takes a plain-language query — like "vintage graphic tee under $30, size M" — and searches a dataset of thrift listings for items that match. If something is found, it picks the best match, calls the model to suggest one or two outfits using pieces from the user's wardrobe, and then generates a short social-media-style caption for the find. If nothing matches the filters, it stops early and tells the user exactly which constraint to relax.
 
 ---
 
@@ -59,24 +57,24 @@
 
 ### `search_listings`
 
-- **What it does:**
-- **Inputs:** <!-- name and type each: `max_price` (float), not "a price" -->
-- **Returns:**
-- **When it has nothing:**
+- **What it does:** Filters the local listings dataset by price and size, scores the remaining items by keyword overlap with a description, and returns the top matches sorted by relevance score.
+- **Inputs:** `description` (str) — keywords describing the item; `size` (str | None) — size token to filter by, e.g. `"M"` or `"S/M"`, or None to skip; `max_price` (float | None) — maximum price inclusive, or None to skip.
+- **Returns:** A list of listing dicts (up to `config.SEARCH_RESULT_LIMIT`), each containing `id`, `title`, `description`, `category`, `style_tags` (list), `size`, `condition`, `price` (float), `colors` (list), `brand` (str or None), and `platform`. Items are ordered best match first by keyword overlap score.
+- **When it has nothing:** Returns an empty list `[]`. Never raises, never returns None.
 
 ### `suggest_outfit`
 
-- **What it does:**
-- **Inputs:**
-- **Returns:**
-- **When it has nothing:**
+- **What it does:** Calls the model to suggest one or two outfits for a thrifted item, either naming specific pieces from the user's wardrobe or giving general styling advice when the wardrobe is empty.
+- **Inputs:** `new_item` (dict) — a listing dict for the item being considered; `wardrobe` (dict) — a wardrobe dict with an `items` key holding a list of wardrobe item dicts (may be empty).
+- **Returns:** A non-empty string containing outfit suggestions. When the wardrobe is populated, the suggestions name specific pieces from it. When the wardrobe is empty, the suggestions are general styling advice for the item type.
+- **When it has nothing:** Not applicable — always returns a non-empty string. An empty wardrobe is handled by pivoting to general advice rather than raising or returning `""`.
 
 ### `create_fit_card`
 
-- **What it does:**
-- **Inputs:**
-- **Returns:**
-- **When it has nothing:**
+- **What it does:** Calls the model to write a 2–4 sentence social-media-style caption for a thrift find, incorporating the outfit suggestion, item name, price, and platform.
+- **Inputs:** `outfit` (str) — the outfit suggestion string from `suggest_outfit()`; `new_item` (dict) — the listing dict for the item.
+- **Returns:** A string of 2–4 sentences written as a real social post, mentioning the item name, price, and platform each exactly once.
+- **When it has nothing:** If `outfit` is empty or whitespace, returns the string `"No outfit suggestion was available to build a fit card from."` without calling the model.
 
 ---
 
@@ -93,13 +91,13 @@
      The grader checks your code against what you claim here, so the file and
      function have to be real. -->
 
-**Branch rule:**
+**Branch rule:** If `search_listings` returns an empty list, write a message into `session["error"]` telling the user which constraint to relax (size, price ceiling, or description keywords), and return the session immediately — `suggest_outfit` and `create_fit_card` are never called. If `search_listings` returns one or more results, take the first result, pass it to `suggest_outfit`, pass the outfit string to `create_fit_card`, and return the completed session.
 
 **Where it lives:** `agent.py::run_agent`
 
-**How the query is parsed:** <!-- regex, string splitting, or asking the model — say which -->
+**How the query is parsed:** Regex. Three patterns are applied in sequence to the raw query string: (1) `size[:\s]+(\S+)` captures the size token; (2) `under\s*\$?([\d.]+)` or `\$([\d.]+)` captures the price ceiling as a float; (3) the matched spans are removed from the string and the remaining text is cleaned up with `\s+` normalization to produce the description keyword string.
 
-**What moves through the session:** <!-- which fields, in what order -->
+**What moves through the session:** `session["parsed"]` (dict with `description`, `size`, `max_price`) → `session["search_results"]` (list of listing dicts) → branch: `session["error"]` and early return, or → `session["selected_item"]` (first listing dict) → `session["outfit_suggestion"]` (str) → `session["fit_card"]` (str).
 
 ---
 
