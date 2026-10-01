@@ -25,9 +25,7 @@ Given a query that matches at least one listing, the agent completes all three
 tool calls and returns a fit card — in at least 4 of 5 tries.
 
 **Why this target:**
-<!-- Why 4 of 5 and not 5 of 5? Something about your search, probably —
-     "my search is a plain keyword match and some phrasings will miss" is a
-     real answer. -->
+I chose 4 of 5 because the search tool relies on keyword matching and some query phrasings may not find a result even when one exists.
 
 ---
 
@@ -37,26 +35,16 @@ Given a query that matches no listings, the agent stops before calling
 `suggest_outfit` and returns a message naming what to change — 5 of 5 tries.
 
 **Why this target:**
-<!-- Why is 5 of 5 reasonable here when criterion 1 isn't? What's different
-     about this path? -->
+The no-results path is deterministic and does not depend on a model, so it should behave correctly every time.
 
 ---
 
 ## 3. Something about state
 
-<!-- YOU WRITE THIS ONE.
-
-     How would you know that the item your search found is the same item the
-     next tool received? Name something countable or observable.
-
-     This is the criterion people find hardest, because state failure doesn't
-     look like state failure — it looks like a tool problem. Something that
-     compares session["selected_item"] against what actually reached
-     suggest_outfit is the shape you're after. -->
-
-
+The listing ID in `session["selected_item"]` matches the listing ID in `session["search_results"][0]` — in 5 of 5 test runs. Observable by comparing `session["selected_item"]["id"]` against `session["search_results"][0]["id"]` in the returned session dict.
 
 **Why this target:**
+Passing state correctly between tools is a core requirement of the agent. If the IDs do not match, the agent may generate recommendations for the wrong item. Because this is a direct dict lookup with no model involved, a single failure means the wiring is broken, not unlucky, so 5 of 5 is the right bar.
 
 
 
@@ -64,20 +52,10 @@ Given a query that matches no listings, the agent stops before calling
 
 ## 4. Something about the fit card
 
-<!-- YOU WRITE THIS ONE.
-
-     The fit card calls a model, so the same input can produce different words
-     each time. That's not a bug — it's the nature of the tool. So what would
-     make it acceptable?
-
-     Think about what you'd actually be unhappy to see. A caption that never
-     mentions the price? Two different items producing the same opening
-     sentence? A card longer than a caption anyone would post? Any of those can
-     be turned into a number. -->
-
-
+For any listing input, the fit card includes the listing's title, its price, and its platform — each exactly once — in at least 4 of 5 runs.
 
 **Why this target:**
+The prompt explicitly instructs the model to include all three. I target 4 of 5 rather than 5 of 5 because the model occasionally omits or paraphrases the platform name, and that variation is a property of the model output rather than a bug in the tool.
 
 
 
@@ -85,16 +63,10 @@ Given a query that matches no listings, the agent stops before calling
 
 ## 5. Your choice
 
-<!-- YOU WRITE THIS ONE TOO.
-
-     Pick something you actually care about getting right. Speed, the empty
-     wardrobe path, what happens when the model can't be reached, whether the
-     search respects a price ceiling — anything, as long as it names a number
-     or an observable outcome. -->
-
-
+When a query includes a price ceiling (e.g. "under $25"), every listing in `session["search_results"]` has a price ≤ that ceiling — in 5 of 5 runs.
 
 **Why this target:**
+Price filtering is deterministic arithmetic with no model involvement, so a single failure means the filter is broken rather than unlucky. A bug here would let over-budget results through silently, and the agent would appear to work while violating the user's stated constraint on every run.
 
 
 
