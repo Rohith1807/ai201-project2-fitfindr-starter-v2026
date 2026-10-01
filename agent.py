@@ -13,6 +13,8 @@ Build and test your three tools in `tools.py` first. Then come here.
     python agent.py          runs both example paths below
 """
 
+import re
+
 import config
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
@@ -107,8 +109,65 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     """
     session = new_session(query, wardrobe)
 
-    # TODO: delete these two lines and build the loop.
-    session["error"] = "The planning loop isn't built yet — see the TODO in agent.py."
+    # IN UNIT 4 you come back and add two things:
+    #   • Trace calls. One per step. `trace.step("search_listings", inputs=..., returned=...)`
+    #   • A handler for ModelUnavailable, so a bad key produces a message rather than a stack trace.
+
+    count = 0
+
+    # Step 1: parse the query with regex
+    # Strategy: look for "size <token>" or "size: <token>", then "under $N" or "$N",
+    # and treat the remainder as the description.
+    size_match = re.search(r'\bsize[:\s]+([A-Za-z0-9/]+)', query, re.IGNORECASE)
+    size = size_match.group(1) if size_match else None
+
+    price_match = re.search(r'under\s*\$?([\d.]+)', query, re.IGNORECASE)
+    if not price_match:
+        price_match = re.search(r'\$\s*([\d.]+)', query, re.IGNORECASE)
+    max_price = float(price_match.group(1)) if price_match else None
+
+    # Strip parsed tokens from the query to get a clean description
+    desc = query
+    if size_match:
+        desc = desc[:size_match.start()] + desc[size_match.end():]
+    if price_match:
+        desc = desc[:price_match.start()] + desc[price_match.end():]
+    desc = re.sub(r'\bunder\b', '', desc, flags=re.IGNORECASE)
+    desc = re.sub(r'\s+', ' ', desc).strip(" ,$")
+
+    session["parsed"] = {"description": desc, "size": size, "max_price": max_price}
+
+    # Step 2: loop (single iteration here — the structure supports future expansion)
+    count += 1
+    trace.check_iterations(count)
+
+    # Step 3: search
+    results = search_listings(desc, size=size, max_price=max_price)
+    session["search_results"] = results
+
+    # Branch: nothing came back
+    if not results:
+        parts = []
+        if size:
+            parts.append(f"size {size}")
+        if max_price is not None:
+            parts.append(f"a budget under ${max_price:.0f}")
+        constraint_str = " and ".join(parts) if parts else "those constraints"
+        session["error"] = (
+            f"No listings matched '{desc}' with {constraint_str}. "
+            "Try broadening the description, removing the size filter, or raising the price limit."
+        )
+        return session
+
+    # Step 4: pick the first result
+    session["selected_item"] = results[0]
+
+    # Step 5: suggest outfit
+    session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+
+    # Step 6: create fit card
+    session["fit_card"] = create_fit_card(session["outfit_suggestion"], results[0])
+
     return session
 
 
