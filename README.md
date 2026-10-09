@@ -110,6 +110,8 @@ In all other cases: take the first search result, call `suggest_outfit`, call `c
 
 **What moves through the session:** `session["parsed"]` (dict with `description`, `size`, `max_price`) → `session["search_results"]` (list of listing dicts) → branch 1: `session["error"]` and early return, or → `session["selected_item"]` (first listing dict) → `session["alternatives"]` (list of listing dicts) → `session["outfit_suggestion"]` (str) → branch 2: `session["error"]` and early return, or → `session["fit_card"]` (str).
 
+**MCP move:** `search_listings` and `find_alternatives` were moved from direct function calls to `call_tool("search_listings", {...})` and `call_tool("find_alternatives", {...})` in `agent.py::run_agent`. On the server side, both are registered in `mcp_server.py` using FastMCP with type-hinted signatures; FastMCP builds the JSON schema from the hints automatically. Nothing behaved differently after the move — return values are identical because `_unwrap()` in `mcp_client.py` deserializes the JSON response back to the original Python types. The only visible change is in the trace: step labels now read "(via MCP)" and "(via MCP, no size)" to make the protocol boundary explicit.
+
 ---
 
 ## Sample Run
@@ -279,6 +281,18 @@ python -c "from tools import find_alternatives; from utils.data_loader import lo
 - *What came back:* Claude suggested three options: (A) stop if `suggest_outfit` returns empty, (B) flag if all results exceed the budget, (C) skip a result with missing fields. It recommended Option A as the most honest second branch because it tests a genuinely different condition — search succeeded but the model returned nothing — rather than duplicating the empty-search logic.
 - *What I changed:* I chose Option A and implemented the branch: after writing to `session["outfit_suggestion"]`, the loop checks if the string is empty or whitespace, sets `session["error"]` if so, and returns without calling `create_fit_card`.
 
+**Moment 3 (Unit 4)**
+
+- *What I asked for:* I had criterion 4 written to check that the fit card includes the listing's title verbatim, but none of the five before-run fit cards contained the exact title string — the model paraphrased every time. I asked how to make the title appear literally without rewriting the tool from scratch.
+- *What came back:* The suggestion was to inject the exact title string into the `create_fit_card` prompt directly — changing "Mention the item" to `f"Refer to the item by its exact name '{new_item.get('title')}'"` — so the model has the literal string in its context and is instructed to use it.
+- *What I changed:* Updated the prompt in `tools.py::create_fit_card`. After the change, all five after-run fit cards contained the exact title string verbatim. The criterion went from requiring a judgment call to being checkable with a substring search.
+
+**Moment 4 (Unit 4)**
+
+- *What I asked for:* I needed to trigger the `ModelUnavailable` failure mode but editing `.env` didn't work — the model kept responding normally.
+- *What came back:* The explanation was that `load_dotenv` doesn't override an existing system environment variable on Windows — the `GEMINI_API_KEY` set in the Windows system environment takes precedence over the `.env` file, so the bad key in `.env` was never read. The fix was to set `$env:GEMINI_API_KEY="BADKEY"` directly in the PowerShell session before running.
+- *What I changed:* Set the bad key at the shell level, triggered the failure, recorded the trace output, then restored the real key.
+
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
      Don't fill these in during unit 3.
@@ -412,8 +426,6 @@ $ python app.py ask 'designer ballgown size XXS under $5' --trace
       →    stopping — no results
 
   No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
-
-0 model calls this session
 ```
 
 The agent names the constraints that failed and tells the user which one to relax.
@@ -439,7 +451,6 @@ Blend the tee's graphic style with the "cottagecore" tag by pairing it with a di
 
   Fit card: Obsessed with this little butterfly tee — it's giving total 2000s pop star off-duty. Snagged it on depop for just $18.0 and I'm already planning to style it with low-rise cargos for that ultimate nostalgic look!
 
-2 model calls this session, 412 prompt + 283 output tokens
 ```
 
 No crash, no empty string — `suggest_outfit` pivots to general styling advice when `wardrobe["items"]` is empty.
@@ -467,7 +478,6 @@ $ $env:GEMINI_API_KEY="BADKEY_BROKEN"; python app.py ask 'vintage jacket under $
 
   The model couldn't be reached while generating outfit suggestions: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.. Check your API key in .env and try again.
 
-1 model calls this session
 ```
 
 The `ModelUnavailable` exception is caught in `run_agent()`, a readable message is put in `session["error"]`, and the agent stops without a stack trace. **Handler location:** `agent.py::run_agent`, wrapping the `suggest_outfit` and `create_fit_card` calls.
@@ -502,8 +512,6 @@ $ python app.py ask 'vintage graphic tee under $30' --trace
   Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
   Outfit:   [see above]
   Fit card: obsessed is an understatement for this little y2k butterfly baby tee 🦋 throwing it on with baggy denim and chunky sneakers all spring long. snagged it on depop for just $18.0 and she's already my favorite piece in the closet!
-
-0 model calls this session, 2 served from cache
 ```
 
 **Empty search**
@@ -521,8 +529,6 @@ $ python app.py ask 'designer ballgown size XXS under $5' --trace
       →    stopping — no results
 
   No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
-
-0 model calls this session
 ```
 
 The empty-search trace is 3 steps; the happy-path trace is 6. Steps 3–6 (select, alternatives, outfit, fit card) never fire when search returns nothing.
@@ -560,7 +566,7 @@ The previous instruction said "mention the item" without specifying which name t
 | 4. Fit card includes title, price, and platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 | 5. All search results at or under price ceiling | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-Produced by: `run_eval.py::main` · 2026-10-09 16:23 · 5 tries per scenario, caching off · Temperature 0.9
+Produced by: `run_eval.py::main`
 
 **Did it help, and how do I know:**
 
@@ -582,7 +588,13 @@ The overall scores did not change (all MET both before and after), because the b
 
 ## What's Still Broken
 
-Nothing in the current run log is broken — all five criteria met in both before and after runs. The one thing that remains uncertain: criterion 3 passes by construction (it's a single `results[0]` assignment) rather than by surviving a genuine stress condition. Testing it across five *different* queries — especially queries near the edge of what the keyword scorer returns — would be a more honest test of whether state stays consistent under variation. That's the next thing I'd measure if I were running another round.
+All five criteria pass in the after2 run. But "passing" and "nothing left to fix" are not the same thing.
+
+**Criterion 3** passes by construction — it's a single `results[0]` assignment and can't fail unless the list is empty, which the branch already handles. The scenario runs the same query five times, so the same item wins every time. The criterion never faces a real test of whether state stays consistent across *different* results. What I'd do: replace the single scenario with five distinct queries, check that `selected_item["id"] == search_results[0]["id"]` in every one. I stopped here because the change is to the eval setup, not the agent, and the unit was already complete.
+
+**Criterion 1** has a 4/5 target that was written to allow for model failures (empty outfit string, slow API). In practice it passed 5/5 across all three runs. That's lucky, not reliable. The retry I added in the second improvement closes the empty-string gap, but a genuine `ModelUnavailable` still ends the run on the first attempt for `create_fit_card` — only `suggest_outfit` has a retry. What I'd do: add the same retry pattern around `create_fit_card`. I stopped because the error handling is there and the runs are passing; fixing the asymmetry is a cleanup, not a requirement.
+
+**Criterion 4** is now objectively scorable after the first improvement, but the price format "$27.0" is a Python float repr, not a human price. A real post would say "$27." What I'd do: format the price in the prompt as `${price:.0f}` when the cents are zero. I stopped because it's a cosmetic issue — the substring "$27.0" is present in the fit card and the criterion passes either way.
 
 ---
 
@@ -620,7 +632,6 @@ Nothing in the current run log is broken — all five criteria met in both befor
       "max_price": max_price,
   })
   ```
-  Also removed `find_alternatives` from the `from tools import ...` line since it no longer needs a local copy.
 
 **Trace showing both MCP calls:**
 ```
@@ -714,13 +725,13 @@ if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
 | 4. Fit card includes title, price, and platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 | 5. All search results at or under price ceiling | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
 
-Produced by: `run_eval.py::main` · 2026-10-09 16:52 · 5 tries per scenario, caching off · Temperature 0.9
+Produced by: `run_eval.py::main`
 
 **Did it help, and how do I know:**
 
 The scores are identical to the after1 run — all five criteria MET, 5/5 each. The retry never fired in this run because the model didn't return empty during these 25 calls.
 
-That's the honest answer: the change didn't move the numbers, because the baseline was already 5/5 and the failure mode it defends against (empty outfit string) didn't occur. The improvement is defensive — it closes a gap the diagnosis named without changing what the eval can currently measure. To observe the retry firing you'd need either a degraded API session or a deliberately empty-returning stub, neither of which the eval runs.
+the change didn't move the numbers, because the baseline was already 5/5 and the failure mode it defends against (empty outfit string) didn't occur. The improvement is defensive — it closes a gap the diagnosis named without changing what the eval can currently measure. To observe the retry firing you'd need either a degraded API session or a deliberately empty-returning stub, neither of which the eval runs.
 
 The scores being the same is not evidence the change was useless. Criterion 1's 4/5 target existed because empty-outfit failures are real. The after2 run just didn't happen to hit one.
 
