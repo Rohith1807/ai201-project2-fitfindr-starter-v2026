@@ -346,34 +346,141 @@ that produced it:
 
 ---
 
+## Failure Modes
+
+### Empty search
+
+Query something the data cannot have.
+
+```
+$ python app.py ask 'designer ballgown size XXS under $5' --trace
+
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: [] (empty)
+[3] branch: empty search
+      →    stopping — no results
+
+  No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
+
+0 model calls this session
+```
+
+The agent names the constraints that failed and tells the user which one to relax.
+
+### Empty wardrobe
+
+Run with `--empty-wardrobe`; `suggest_outfit` receives a wardrobe dict with no items.
+
+```
+$ python app.py ask 'vintage graphic tee under $30' --empty-wardrobe
+
+(running with an empty wardrobe)
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+
+  Outfit:   Here are two easy styling ideas for this Y2K butterfly baby tee, keeping its vintage, nostalgic vibe in mind:
+
+**1. The Classic Y2K Off-Duty Look**
+Lean into the turn-of-the-millennium aesthetic by pairing the baby tee with low-rise, wide-leg cargo pants in khaki or light-wash denim. Finish the outfit with a pair of white retro chunky sneakers and accessorize with a small nylon shoulder bag and a plastic butterfly claw clip in the hair.
+
+**2. Sweet & Casual Everyday Look**
+Blend the tee's graphic style with the "cottagecore" tag by pairing it with a distressed denim mini skirt. Layer on some white crew socks paired with retro canvas sneakers or Mary Janes. Add a beaded choker necklace and a canvas tote bag.
+
+  Fit card: Obsessed with this little butterfly tee — it's giving total 2000s pop star off-duty. Snagged it on depop for just $18.0 and I'm already planning to style it with low-rise cargos for that ultimate nostalgic look!
+
+2 model calls this session, 412 prompt + 283 output tokens
+```
+
+No crash, no empty string — `suggest_outfit` pivots to general styling advice when `wardrobe["items"]` is empty.
+
+### Model unavailable
+
+Set `GEMINI_API_KEY` to a bad value and run a query that reaches the model (search must succeed).
+
+```
+$ $env:GEMINI_API_KEY="BADKEY_BROKEN"; python app.py ask 'vintage jacket under $60'
+
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: 10 items: 90s Track Jacket — Navy/White Stripe, Denim Jacket — Light Wash, Cropped, Vintage Levi's 501 Jeans — Medium Wash … +7 more
+[3] select_item
+      out: 90s Track Jacket — Navy/White Stripe ($45.0, poshmark)
+[4] find_alternatives
+      in:  dict with keys: item, max_price
+      out: 6 items: Denim Vest — Medium Wash, Studded, Shacket — Olive Canvas, Vintage Linen Blazer — Cream … +3 more
+[5] suggest_outfit
+      →    stopped — ModelUnavailable
+
+  The model couldn't be reached while generating outfit suggestions: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.. Check your API key in .env and try again.
+
+1 model calls this session
+```
+
+The `ModelUnavailable` exception is caught in `run_agent()`, a readable message is put in `session["error"]`, and the agent stops without a stack trace. **Handler location:** `agent.py::run_agent`, wrapping the `suggest_outfit` and `create_fit_card` calls.
+
+---
+
 ## Loop Trace
-
-<!-- One full run, printed step by step, with the MCP call visible in it.
-
-     `python app.py ask '...' --trace` once you've added the trace.step()
-     calls in Milestone 2.
-
-     Worth pasting BOTH the happy path and the empty-search path. The empty
-     one should be visibly shorter, because it stops. If your two traces are
-     the same length, your branch isn't working — and this is the fastest way
-     anyone will ever find that out. -->
 
 **Happy path**
 
 ```
+$ python app.py ask 'vintage graphic tee under $30' --trace
 
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: 10 items: Y2K Baby Tee — Butterfly Print, Graphic Tee — 2003 Tour Bootleg Style, Vintage Band Tee — Faded Grey … +7 more
+[3] select_item
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+[4] find_alternatives
+      in:  dict with keys: item, max_price
+      out: 10 items: Mesh Long-Sleeve Top — Black, Henley Long Sleeve — Washed Burgundy, Tie-Dye Long Sleeve — Pastel … +7 more
+[5] suggest_outfit
+      in:  dict with keys: item, wardrobe_items
+      out: Here are two outfit ideas using the Y2K butterfly baby tee and pieces from your existing wardrobe:  ### Outfit…
+[6] create_fit_card
+      in:  dict with keys: outfit
+      out: obsessed is an understatement for this little y2k butterfly baby tee 🦋 throwing it on with baggy denim and chu…
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+  Outfit:   [see above]
+  Fit card: obsessed is an understatement for this little y2k butterfly baby tee 🦋 throwing it on with baggy denim and chunky sneakers all spring long. snagged it on depop for just $18.0 and she's already my favorite piece in the closet!
+
+0 model calls this session, 2 served from cache
 ```
 
 **Empty search**
 
 ```
+$ python app.py ask 'designer ballgown size XXS under $5' --trace
 
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: [] (empty)
+[3] branch: empty search
+      →    stopping — no results
+
+  No listings matched 'designer ballgown $5' with size XXS and a budget under $5. Try broadening the description, removing the size filter, or raising the price limit.
+
+0 model calls this session
 ```
 
-**On the MCP move:** <!-- what changed in your code, and whether anything
-behaved differently afterwards. If the rewire didn't work, say exactly where it
-broke — the error text and the last thing that worked. That earns the point in
-full. -->
+The empty-search trace is 3 steps; the happy-path trace is 6. Steps 3–6 (select, alternatives, outfit, fit card) never fire when search returns nothing.
+
+**On the MCP move:** `search_listings` was moved from a direct function call in `run_agent()` to `call_tool("search_listings", {...})` via `mcp_client.py`. The MCP server (`mcp_server.py`) registers the tool with FastMCP, and `mcp_client.call_tool` spins up the server as a subprocess over stdio, calls the tool, and unwraps the response back to a Python list. The return value was identical — the same list of dicts — because `mcp_client._unwrap()` parses the JSON content block back into native Python. The trace labels the step `search_listings (via MCP)` so the MCP hop is visible in every trace.
 
 
 

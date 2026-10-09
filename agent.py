@@ -110,15 +110,9 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     """
     session = new_session(query, wardrobe)
 
-    # IN UNIT 4 you come back and add two things:
-    #   • Trace calls. One per step. `trace.step("search_listings", inputs=..., returned=...)`
-    #   • A handler for ModelUnavailable, so a bad key produces a message rather than a stack trace.
-
     count = 0
 
     # Step 1: parse the query with regex
-    # Strategy: look for "size <token>" or "size: <token>", then "under $N" or "$N",
-    # and treat the remainder as the description.
     size_match = re.search(r'\bsize[:\s]+([A-Za-z0-9/]+)', query, re.IGNORECASE)
     size = size_match.group(1) if size_match else None
 
@@ -127,7 +121,6 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         price_match = re.search(r'\$\s*([\d.]+)', query, re.IGNORECASE)
     max_price = float(price_match.group(1)) if price_match else None
 
-    # Strip parsed tokens from the query to get a clean description
     desc = query
     if size_match:
         desc = desc[:size_match.start()] + desc[size_match.end():]
@@ -137,14 +130,23 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     desc = re.sub(r'\s+', ' ', desc).strip(" ,$")
 
     session["parsed"] = {"description": desc, "size": size, "max_price": max_price}
+    trace.step("parse_query", inputs={"query": query},
+               returned={"description": desc, "size": size, "max_price": max_price})
 
-    # Step 2: loop (single iteration here — the structure supports future expansion)
     count += 1
     trace.check_iterations(count)
 
-    # Step 3: search
-    results = search_listings(desc, size=size, max_price=max_price)
+    # Step 2: search via MCP
+    from mcp_client import call_tool
+    results = call_tool("search_listings", {
+        "description": desc,
+        "size": size,
+        "max_price": max_price,
+    })
     session["search_results"] = results
+    trace.step("search_listings (via MCP)",
+               inputs={"description": desc, "size": size, "max_price": max_price},
+               returned=results)
 
     # Branch: nothing came back
     if not results:
@@ -158,27 +160,56 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             f"No listings matched '{desc}' with {constraint_str}. "
             "Try broadening the description, removing the size filter, or raising the price limit."
         )
+        trace.step("branch: empty search", note="stopping — no results")
         return session
 
-    # Step 4: pick the first result
+    # Step 3: pick the first result and find alternatives
     session["selected_item"] = results[0]
+    trace.step("select_item", returned=results[0])
 
-    # Step 4b: find alternatives in the same category at or under the same price
     session["alternatives"] = find_alternatives(results[0], max_price=max_price)
+    trace.step("find_alternatives",
+               inputs={"item": results[0].get("title"), "max_price": max_price},
+               returned=session["alternatives"])
 
-    # Step 5: suggest outfit
-    session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+    # Step 4: suggest outfit
+    try:
+        session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+    except ModelUnavailable as exc:
+        session["error"] = (
+            f"The model couldn't be reached while generating outfit suggestions: {exc}. "
+            "Check your API key in .env and try again."
+        )
+        trace.step("suggest_outfit", note="stopped — ModelUnavailable")
+        return session
 
-    # Branch: model returned nothing — skip fit card and surface the failure
+    trace.step("suggest_outfit",
+               inputs={"item": results[0].get("title"), "wardrobe_items": len(wardrobe.get("items", []))},
+               returned=session["outfit_suggestion"])
+
+    # Branch: model returned nothing
     if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
         session["error"] = (
             "The outfit suggestion came back empty. The item was found but the model "
             "did not return styling advice — try running again or check your API key."
         )
+        trace.step("branch: empty outfit", note="stopping — suggest_outfit returned empty string")
         return session
 
-    # Step 6: create fit card
-    session["fit_card"] = create_fit_card(session["outfit_suggestion"], results[0])
+    # Step 5: create fit card
+    try:
+        session["fit_card"] = create_fit_card(session["outfit_suggestion"], results[0])
+    except ModelUnavailable as exc:
+        session["error"] = (
+            f"The model couldn't be reached while generating the fit card: {exc}. "
+            "Check your API key in .env and try again."
+        )
+        trace.step("create_fit_card", note="stopped — ModelUnavailable")
+        return session
+
+    trace.step("create_fit_card",
+               inputs={"outfit": session["outfit_suggestion"][:60]},
+               returned=session["fit_card"])
 
     return session
 
