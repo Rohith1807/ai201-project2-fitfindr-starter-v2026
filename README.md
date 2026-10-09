@@ -643,6 +643,40 @@ Nothing in the current run log is broken — all five criteria met in both befor
 
 **What I verified:** `python agent.py` completes the full happy path with both MCP calls in the trace. The second run (impossible query) stops at branch: empty search before `find_alternatives` is reached — same behavior as before. Output and alternatives list are unchanged from when `find_alternatives` was called directly.
 
+---
+
+## Stretch: Retry with Looser Constraints
+
+**What it does:** When `search_listings` returns empty and a size filter was active, the agent retries once without the size filter before giving up.
+
+**What changed in `agent.py`:** After the first search returns empty, a retry block checks whether `size` was set. If so, it fires a second `call_tool("search_listings", ...)` with `size=None`, logs the retry step naming the dropped constraint, and continues normally if results come back. If the retry also returns empty, the error branch fires as before.
+
+**Trace showing the retry** (query: `"vintage graphic tee size XXS under $40"` — XXS matches nothing):
+
+```
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: [] (empty)
+[3] retry: dropping size filter
+      →    first search returned 0 results — retrying without size 'XXS'
+[4] search_listings (via MCP, no size)
+      in:  dict with keys: description, size, max_price
+      out: 10 items: Y2K Baby Tee — Butterfly Print, Graphic Tee — 2003 Tour Bootleg Style…
+[5] select_item
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+[6] find_alternatives (via MCP)
+      ...
+[7] suggest_outfit
+      ...
+[8] create_fit_card
+      ...
+```
+
+Step 3 names the dropped constraint (`size 'XXS'`). A query with no size that returns nothing still hits the error branch in one attempt — the retry only fires when a size filter was the likely cause of the miss.
+
 <!-- ═════════════════════════════════════════════════════════════════════
 
      SUBMISSION CHECKLIST — unit 3

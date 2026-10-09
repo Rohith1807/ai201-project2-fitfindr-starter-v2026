@@ -148,10 +148,26 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                inputs={"description": desc, "size": size, "max_price": max_price},
                returned=results)
 
-    # Branch: nothing came back
+    # Retry once without the size filter if the first search came back empty
+    size_dropped = False
+    if not results and size is not None:
+        trace.step("retry: dropping size filter",
+                   note=f"first search returned 0 results — retrying without size '{size}'")
+        results = call_tool("search_listings", {
+            "description": desc,
+            "size": None,
+            "max_price": max_price,
+        })
+        session["search_results"] = results
+        size_dropped = True
+        trace.step("search_listings (via MCP, no size)",
+                   inputs={"description": desc, "size": None, "max_price": max_price},
+                   returned=results)
+
+    # Branch: nothing came back even after retry
     if not results:
         parts = []
-        if size:
+        if size and not size_dropped:
             parts.append(f"size {size}")
         if max_price is not None:
             parts.append(f"a budget under ${max_price:.0f}")
@@ -160,7 +176,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             f"No listings matched '{desc}' with {constraint_str}. "
             "Try broadening the description, removing the size filter, or raising the price limit."
         )
-        trace.step("branch: empty search", note="stopping — no results")
+        trace.step("branch: empty search", note="stopping — no results after retry")
         return session
 
     # Step 3: pick the first result and find alternatives
