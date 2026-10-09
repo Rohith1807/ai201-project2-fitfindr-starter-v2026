@@ -584,7 +584,64 @@ The overall scores did not change (all MET both before and after), because the b
 
 Nothing in the current run log is broken — all five criteria met in both before and after runs. The one thing that remains uncertain: criterion 3 passes by construction (it's a single `results[0]` assignment) rather than by surviving a genuine stress condition. Testing it across five *different* queries — especially queries near the edge of what the keyword scorer returns — would be a more honest test of whether state stays consistent under variation. That's the next thing I'd measure if I were running another round.
 
+---
 
+## Stretch: A Second Tool on MCP
+
+**Which tool:** `find_alternatives`
+
+**Why this one:** Same profile as `search_listings` — pure data lookup with no model call, takes typed inputs, returns a list of dicts. Moving it doesn't change any output, it just changes where the call crosses the protocol boundary.
+
+**What changed:**
+
+- `mcp_server.py` — registered `find_alternatives` with FastMCP:
+  ```python
+  @mcp.tool()
+  def find_alternatives(item: dict, max_price: float | None = None) -> list[dict]:
+      """
+      Given a selected listing dict, find other listings in the same category
+      that are not the same item, optionally capped at a price ceiling.
+      `item` is a full listing dict (must include 'id', 'category', and 'price').
+      `max_price` is a whole-dollar ceiling; when omitted, the selected item's
+      price is used as the ceiling. Returns a list of listing dicts sorted by
+      price ascending, or an empty list when no alternatives exist.
+      """
+      return _find_alternatives_impl(item, max_price)
+  ```
+
+- `agent.py` — replaced the direct call with `call_tool`:
+  ```python
+  # before
+  session["alternatives"] = find_alternatives(results[0], max_price=max_price)
+
+  # after
+  session["alternatives"] = call_tool("find_alternatives", {
+      "item": results[0],
+      "max_price": max_price,
+  })
+  ```
+  Also removed `find_alternatives` from the `from tools import ...` line since it no longer needs a local copy.
+
+**Trace showing both MCP calls:**
+```
+[1] parse_query
+      in:  dict with keys: query
+      out: dict with keys: description, size, max_price
+[2] search_listings (via MCP)
+      in:  dict with keys: description, size, max_price
+      out: 10 items: Y2K Baby Tee — Butterfly Print, Graphic Tee — 2003 Tour Bootleg Style…
+[3] select_item
+      out: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+[4] find_alternatives (via MCP)
+      in:  dict with keys: item, max_price
+      out: 10 items: Mesh Long-Sleeve Top — Black, Henley Long Sleeve — Washed Burgundy…
+[5] suggest_outfit
+      ...
+[6] create_fit_card
+      ...
+```
+
+**What I verified:** `python agent.py` completes the full happy path with both MCP calls in the trace. The second run (impossible query) stops at branch: empty search before `find_alternatives` is reached — same behavior as before. Output and alternatives list are unchanged from when `find_alternatives` was called directly.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 

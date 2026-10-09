@@ -17,7 +17,7 @@ import re
 
 import config
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card, find_alternatives
+from tools import suggest_outfit, create_fit_card
 from generate import ModelUnavailable
 
 
@@ -167,8 +167,11 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     session["selected_item"] = results[0]
     trace.step("select_item", returned=results[0])
 
-    session["alternatives"] = find_alternatives(results[0], max_price=max_price)
-    trace.step("find_alternatives",
+    session["alternatives"] = call_tool("find_alternatives", {
+        "item": results[0],
+        "max_price": max_price,
+    })
+    trace.step("find_alternatives (via MCP)",
                inputs={"item": results[0].get("title"), "max_price": max_price},
                returned=session["alternatives"])
 

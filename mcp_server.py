@@ -60,6 +60,7 @@ works with a direct call, and **a documented failure earns the point in full.**
 from mcp.server.fastmcp import FastMCP
 
 from tools import search_listings as _search_listings_impl  # noqa: F401 — you'll use this below
+from tools import find_alternatives as _find_alternatives_impl  # noqa: F401
 
 # log_level="WARNING" keeps the server from printing an INFO line for every
 # request. Without it your terminal fills with "Processing request of type
@@ -93,6 +94,22 @@ def search_listings(
 # are not optional here. `description: str` becomes a required string;
 # `max_price: float | None = None` becomes an optional number. Getting these
 # wrong is the most common reason a call is rejected.
+
+
+@mcp.tool()
+def find_alternatives(
+    item: dict,
+    max_price: float | None = None,
+) -> list[dict]:
+    """
+    Given a selected listing dict, find other listings in the same category
+    that are not the same item, optionally capped at a price ceiling.
+    `item` is a full listing dict (must include 'id', 'category', and 'price').
+    `max_price` is a whole-dollar ceiling; when omitted, the selected item's
+    price is used as the ceiling. Returns a list of listing dicts sorted by
+    price ascending, or an empty list when no alternatives exist.
+    """
+    return _find_alternatives_impl(item, max_price)
 
 
 if __name__ == "__main__":
