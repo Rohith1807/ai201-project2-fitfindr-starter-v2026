@@ -251,7 +251,7 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         f"Platform: {new_item.get('platform')}\n"
         f"Style: {', '.join(new_item.get('style_tags', []))}\n\n"
         f"Outfit idea: {outfit}\n\n"
-        "Mention the item, its price, and the platform exactly once each. "
+        f"Refer to the item by its exact name '{new_item.get('title')}', and mention its price and platform exactly once each. "
         "Make it feel personal and specific to the vibe — not like a product listing."
     )
 

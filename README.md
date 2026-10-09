@@ -535,39 +535,54 @@ The empty-search trace is 3 steps; the happy-path trace is 6. Steps 3–6 (selec
 
 ## The Improvement
 
-<!-- What you changed, why your diagnosis pointed at it, and the after-run in
-     the same table format. One change, measured properly.
+**What I changed:** Rewrote the instruction line in `tools.py::create_fit_card`.
 
-     `python run_eval.py --label after` -->
+Before:
+```
+"Mention the item, its price, and the platform exactly once each. "
+```
+After:
+```
+f"Refer to the item by its exact name '{new_item.get('title')}', and mention its price and platform exactly once each. "
+```
 
-**What I changed:**
+The previous instruction said "mention the item" without specifying which name to use. The model filled that gap by paraphrasing — "low-rise khaki cargo pants" instead of the listing title "Low-Rise Cargo Pants — Khaki." The new instruction quotes the exact title string directly in the prompt, giving the model no ambiguity about what name to use.
 
-**Which failure it was meant to fix:**
+**Which failure it was meant to fix:** The measurement problem in criterion 4. The original criterion required the title to appear in the fit card, but the model never quoted it verbatim, making the criterion unscoreable without a subjective call. The change makes the original criterion objectively checkable — either the title substring is present or it isn't.
 
 ### Run Log — After
 
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Impossible query stops before second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. selected_item ID matches search_results[0] ID | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card includes title, price, and platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. All search results at or under price ceiling | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+Produced by: `run_eval.py::main` · 2026-10-09 16:23 · 5 tries per scenario, caching off · Temperature 0.9
 
 **Did it help, and how do I know:**
 
-<!-- If it made things worse, say that. Honestly reported, that earns full
-     credit and is more interesting than one that worked. -->
+Yes, clearly. The specific thing the diagnosis named — the verbatim title — is now present in every fit card.
 
+Before the change, 0 of 5 criterion-4 fit cards contained the exact string "Low-Rise Cargo Pants — Khaki". After the change, 5 of 5 do. Sampled from the after run:
 
+```
+Try 1: "Channeling my inner 2000s pop star with these Low-Rise Cargo Pants — Khaki! 🪩 Snagged them on Poshmark for just $27.0..."
+Try 3: "Brought these Low-Rise Cargo Pants — Khaki back to life... Just scooped them on poshmark for $27.0..."
+Try 5: "Obsessed is an understatement—these Low-Rise Cargo Pants — Khaki are giving me all the 2000s off-duty model vibes. Snagged them on Poshmark for just $27.0..."
+```
+
+The change also propagated to all other items — the after run shows "Y2K Baby Tee — Butterfly Print" and "Denim Jacket — Light Wash, Cropped" appearing verbatim in every fit card across every scenario, not just the criterion-4 scenario.
+
+The overall scores did not change (all MET both before and after), because the before scoring was generous. What changed is that criterion 4 is now objectively scorable under the original wording without any judgment call.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each criterion still missed: what you'd do, and why you stopped where
-     you did. "I ran out of time" is fine if it's true. Pretending nothing is
-     left is not. -->
+Nothing in the current run log is broken — all five criteria met in both before and after runs. The one thing that remains uncertain: criterion 3 passes by construction (it's a single `results[0]` assignment) rather than by surviving a genuine stress condition. Testing it across five *different* queries — especially queries near the edge of what the keyword scorer returns — would be a more honest test of whether state stays consistent under variation. That's the next thing I'd measure if I were running another round.
 
 
 
