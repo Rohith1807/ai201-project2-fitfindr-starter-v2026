@@ -206,13 +206,29 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                inputs={"item": results[0].get("title"), "wardrobe_items": len(wardrobe.get("items", []))},
                returned=session["outfit_suggestion"])
 
-    # Branch: model returned nothing
+    # Retry once if the outfit came back empty (model responded but gave nothing)
+    if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+        trace.step("retry: empty outfit", note="suggest_outfit returned empty — retrying once")
+        try:
+            session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+        except ModelUnavailable as exc:
+            session["error"] = (
+                f"The model couldn't be reached while generating outfit suggestions: {exc}. "
+                "Check your API key in .env and try again."
+            )
+            trace.step("suggest_outfit (retry)", note="stopped — ModelUnavailable on retry")
+            return session
+        trace.step("suggest_outfit (retry)",
+                   inputs={"item": results[0].get("title"), "wardrobe_items": len(wardrobe.get("items", []))},
+                   returned=session["outfit_suggestion"])
+
+    # Branch: model returned nothing even after retry
     if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
         session["error"] = (
-            "The outfit suggestion came back empty. The item was found but the model "
+            "The outfit suggestion came back empty twice. The item was found but the model "
             "did not return styling advice — try running again or check your API key."
         )
-        trace.step("branch: empty outfit", note="stopping — suggest_outfit returned empty string")
+        trace.step("branch: empty outfit", note="stopping — suggest_outfit empty after retry")
         return session
 
     # Step 5: create fit card

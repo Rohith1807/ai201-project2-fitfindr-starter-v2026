@@ -677,6 +677,53 @@ Nothing in the current run log is broken — all five criteria met in both befor
 
 Step 3 names the dropped constraint (`size 'XXS'`). A query with no size that returns nothing still hits the error branch in one attempt — the retry only fires when a size filter was the likely cause of the miss.
 
+---
+
+## Stretch: A Second Measured Improvement
+
+**What I changed:** Added a retry in `agent.py` when `suggest_outfit` returns an empty string (the model responded but gave nothing back — not a `ModelUnavailable` error, just silence).
+
+The diagnosis named criterion 1 as "model-dependent, could fail on API errors" and noted that its 4/5 target allowed for exactly this failure: a run where the model returns an empty outfit suggestion, the branch fires, and the run stops before the fit card. Without a retry, one empty response from the model ends the run. With the retry, the agent tries once more before giving up.
+
+The retry block sits between the empty-check and the hard branch:
+
+```python
+# Retry once if the outfit came back empty (model responded but gave nothing)
+if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+    trace.step("retry: empty outfit", note="suggest_outfit returned empty — retrying once")
+    try:
+        session["outfit_suggestion"] = suggest_outfit(results[0], wardrobe)
+    except ModelUnavailable as exc:
+        ...
+    trace.step("suggest_outfit (retry)", ...)
+
+# Branch: model returned nothing even after retry
+if not session["outfit_suggestion"] or not session["outfit_suggestion"].strip():
+    session["error"] = "The outfit suggestion came back empty twice. ..."
+    trace.step("branch: empty outfit", note="stopping — suggest_outfit empty after retry")
+    return session
+```
+
+### Run Log — After2
+
+| Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1. Matching query completes all three tools | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 2. Impossible query stops before second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 3. selected_item ID matches search_results[0] ID | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 4. Fit card includes title, price, and platform | 4 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+| 5. All search results at or under price ceiling | 5 of 5 | PASS | PASS | PASS | PASS | PASS | MET (5/5) |
+
+Produced by: `run_eval.py::main` · 2026-10-09 16:52 · 5 tries per scenario, caching off · Temperature 0.9
+
+**Did it help, and how do I know:**
+
+The scores are identical to the after1 run — all five criteria MET, 5/5 each. The retry never fired in this run because the model didn't return empty during these 25 calls.
+
+That's the honest answer: the change didn't move the numbers, because the baseline was already 5/5 and the failure mode it defends against (empty outfit string) didn't occur. The improvement is defensive — it closes a gap the diagnosis named without changing what the eval can currently measure. To observe the retry firing you'd need either a degraded API session or a deliberately empty-returning stub, neither of which the eval runs.
+
+The scores being the same is not evidence the change was useless. Criterion 1's 4/5 target existed because empty-outfit failures are real. The after2 run just didn't happen to hit one.
+
 <!-- ═════════════════════════════════════════════════════════════════════
 
      SUBMISSION CHECKLIST — unit 3
